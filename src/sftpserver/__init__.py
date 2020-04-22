@@ -29,6 +29,7 @@ import socket
 import argparse
 import sys
 import textwrap
+import threading
 
 import paramiko
 
@@ -37,6 +38,20 @@ from sftpserver.stub_sftp import StubServer, StubSFTPServer
 HOST, PORT = 'localhost', 3373
 BACKLOG = 10
 
+
+def socket_thread_loop(conn, keyfile):
+    host_key = paramiko.RSAKey.from_private_key_file(keyfile)
+    transport = paramiko.Transport(conn)
+    transport.add_server_key(host_key)
+    transport.set_subsystem_handler(
+        'sftp', paramiko.SFTPServer, StubSFTPServer)
+
+    server = StubServer()
+    transport.start_server(server=server)
+
+    channel = transport.accept()
+    while transport.is_active():
+        time.sleep(1)
 
 def start_server(host, port, keyfile, level):
     paramiko_level = getattr(paramiko.common, level)
@@ -48,20 +63,18 @@ def start_server(host, port, keyfile, level):
     server_socket.listen(BACKLOG)
 
     while True:
-        conn, addr = server_socket.accept()
+        try:
+            conn, addr = server_socket.accept()
+        except OSError:
+            pass
 
-        host_key = paramiko.RSAKey.from_private_key_file(keyfile)
-        transport = paramiko.Transport(conn)
-        transport.add_server_key(host_key)
-        transport.set_subsystem_handler(
-            'sftp', paramiko.SFTPServer, StubSFTPServer)
-
-        server = StubServer()
-        transport.start_server(server=server)
-
-        channel = transport.accept()
-        while transport.is_active():
-            time.sleep(1)
+        else:
+            new_thread = threading.Thread(
+                target=socket_thread_loop,
+                args=(conn, keyfile),
+                daemon=True,
+            )
+            new_thread.start()
 
 
 def main():
